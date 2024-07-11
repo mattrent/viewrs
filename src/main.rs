@@ -90,7 +90,6 @@ impl Application for Picture {
                     })
                     .collect();
                 self.svg_content = set_visible_layers(&self.svg_content, &self.layers);
-                // println!("{}", String::from_utf8(self.svg_content.clone()).unwrap());
                 Command::none()
             }
         }
