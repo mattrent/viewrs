@@ -1,6 +1,8 @@
+mod fonts;
 mod layers;
 mod picture;
 
+use fonts::replace_fonts;
 use iced::{Application, Settings};
 use layers::get_layers;
 use picture::{Picture, PictureFlags};
@@ -20,6 +22,7 @@ pub fn main() -> iced::Result {
         (Vec::new(), String::new())
     };
 
+    let svg_content = replace_fonts(svg_content);
     let layers = get_layers(&svg_content);
 
     Picture::run(Settings::with_flags(PictureFlags {
