@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.12.1", features = ["svg"] }
+iced = { version = "0.12.1", features = ["svg", "image"] }
+iced_aw = { version = "0.9.3", default-features = false, features = ["modal"] }
 quick-xml = "0.36.0"
+resvg = "0.42"
 
 [profile.release]
 strip = true
