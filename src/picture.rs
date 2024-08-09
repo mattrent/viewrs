@@ -1,23 +1,39 @@
+use core::f32;
 use std::path::PathBuf;
 
-use crate::export::{export_png, generate_png};
+use crate::export::{export_png, generate_png, generate_svg_tree};
 use crate::layers::set_visible_layers;
 use iced::widget::{
     button, checkbox, column, container, row, svg, text, text_input, Checkbox, Container, Row,
 };
-use iced::{executor, theme, Application, Command};
+use iced::{executor, font, theme, Application, Command};
 use iced::{Element, Length};
+use iced_aw::number_input;
 use iced_aw::widgets::Modal;
+use resvg::usvg::{Size, Tree};
 
 #[derive(Debug, Default)]
 pub(crate) struct Picture {
+    // graphical properties
     ask_overwrite: bool,
     show_modal: bool,
+
+    // content + layers
     file_name: String,
-    output_file_name: String,
     svg_content: Vec<u8>,
-    png_content: Vec<u8>,
     layers: Vec<(String, bool)>,
+
+    // PNG + structure
+    png_content: Vec<u8>,
+    svg_tree: Option<Tree>,
+    height: f32,
+    width: f32,
+    ratio: f32,
+
+    // output properties
+    output_file_name: String,
+    output_width: f32,
+    output_height: f32,
 }
 
 #[derive(Debug, Default)]
@@ -32,55 +48,62 @@ pub enum Message {
     ToggleLayerVisibility(String, bool),
     CancelExport,
     OutFileName(String),
+    OutWidth(f32),
+    OutHeight(f32),
     OpenExport,
     SaveExport,
     Overwrite,
     NoOverwrite,
+    FontLoaded,
 }
 
 impl Picture {
-    fn main_modal(&self) -> Container<Message> {
+    fn save_modal(&self) -> Container<Message> {
         container(
             column![column![
-                column![text("Path").size(12),].spacing(5),
-                text_input("", &self.output_file_name).on_input(Message::OutFileName),
+                text("Path").size(16),
+                text_input("", &self.output_file_name)
+                    .on_input(Message::OutFileName)
+                    .width(Length::Fixed(500.0))
+                    .size(16),
+                text("Width").size(16),
+                number_input(self.output_width, f32::MAX, Message::OutWidth).size(16.0),
+                text("Height").size(16),
+                number_input(self.output_height, f32::MAX, Message::OutHeight).size(16.0),
                 container(
                     row![
-                        button(text("Cancel")).on_press(Message::CancelExport),
-                        button(text("Save")).on_press(Message::SaveExport),
+                        button(text("Cancel").size(16)).on_press(Message::CancelExport),
+                        button(text("Save").size(16)).on_press(Message::SaveExport),
                     ]
                     .spacing(20)
                 )
-                .width(Length::Fill)
                 .center_x()
             ]
             .spacing(10)]
             .spacing(20),
         )
-        .width(Length::Shrink)
-        .padding(10)
+        .padding(15)
         .style(theme::Container::Box)
     }
 
     fn overwrite_modal(&self) -> Container<Message> {
         container(
             column![column![
-                column![text("File exists. Overwrite?").size(12),].spacing(5),
+                column![text("File exists. Overwrite?").size(16),].spacing(5),
                 container(
                     row![
-                        button(text("No")).on_press(Message::NoOverwrite),
-                        button(text("Yes")).on_press(Message::Overwrite),
+                        button(text("No").size(16)).on_press(Message::NoOverwrite),
+                        button(text("Yes").size(16)).on_press(Message::Overwrite),
                     ]
                     .spacing(20)
                 )
-                .width(Length::Fill)
                 .center_x()
             ]
             .spacing(10)]
             .spacing(20),
         )
         .width(Length::Shrink)
-        .padding(10)
+        .padding(15)
         .style(theme::Container::Box)
     }
 }
@@ -104,7 +127,10 @@ impl Application for Picture {
             layers: flags.layers.iter().map(|l| (l.to_string(), true)).collect(),
             ..Default::default()
         };
-        (picture, Command::none())
+        (
+            picture,
+            font::load(iced_aw::BOOTSTRAP_FONT_BYTES).map(|_| Message::FontLoaded),
+        )
     }
 
     fn title(&self) -> String {
@@ -113,6 +139,7 @@ impl Application for Picture {
 
     fn update(&mut self, message: Self::Message) -> Command<Message> {
         match message {
+            Message::FontLoaded => Command::none(),
             Message::ToggleLayerVisibility(layer, visible) => {
                 self.layers = self
                     .layers
@@ -130,6 +157,16 @@ impl Application for Picture {
                 Command::none()
             }
             Message::OpenExport => {
+                // generate tree first time export dialog is opened
+                if self.svg_tree.is_none() {
+                    let (svg_tree, pixmap_size) = generate_svg_tree(&self.svg_content);
+                    self.svg_tree = Some(svg_tree);
+                    self.height = pixmap_size.height();
+                    self.width = pixmap_size.width();
+                    self.ratio = self.width / self.height;
+                    self.output_height = pixmap_size.height();
+                    self.output_width = pixmap_size.width();
+                }
                 self.show_modal = true;
                 Command::none()
             }
@@ -137,24 +174,45 @@ impl Application for Picture {
                 self.output_file_name = output_file_name;
                 Command::none()
             }
+            Message::OutHeight(height) => {
+                self.output_height = height;
+                self.output_width = height * self.ratio;
+                Command::none()
+            }
+            Message::OutWidth(width) => {
+                self.output_width = width;
+                self.output_height = width / self.ratio;
+                Command::none()
+            }
             Message::CancelExport => {
                 self.show_modal = false;
+                self.output_height = self.height;
+                self.output_width = self.width;
                 Command::none()
             }
             Message::SaveExport => {
-                let png_content = generate_png(&self.svg_content);
+                let scale = self.output_width / self.width;
+                let png_content = generate_png(
+                    self.svg_tree.as_ref().unwrap(),
+                    &Size::from_wh(self.output_width, self.output_height).unwrap(),
+                    scale,
+                );
                 self.png_content = png_content;
                 let exported = export_png(&self.png_content, &self.output_file_name, false);
-                if exported == None {
+                if exported.is_none() {
                     self.ask_overwrite = true;
                 } else {
                     self.show_modal = false;
+                    self.output_height = self.height;
+                    self.output_width = self.width;
                 }
                 Command::none()
             }
             Message::Overwrite => {
                 self.show_modal = false;
                 self.ask_overwrite = false;
+                self.output_height = self.height;
+                self.output_width = self.width;
                 export_png(&self.png_content, &self.output_file_name, true);
                 Command::none()
             }
@@ -210,7 +268,7 @@ impl Application for Picture {
                 let modal = self.overwrite_modal();
                 Modal::new(content, Some(modal)).into()
             } else {
-                let modal = self.main_modal();
+                let modal = self.save_modal();
                 Modal::new(content, Some(modal)).into()
             }
         } else {

@@ -1,9 +1,10 @@
+use resvg::usvg::{Size, Tree};
 use resvg::{tiny_skia, usvg};
 use std::io::prelude::*;
 use std::path::PathBuf;
 use std::{fs::File, sync::Arc};
 
-pub(crate) fn generate_png(svg_content: &Vec<u8>) -> Vec<u8> {
+pub(crate) fn generate_svg_tree(svg_content: &Vec<u8>) -> (Tree, Size) {
     let mut fontdb = usvg::fontdb::Database::new();
     fontdb.load_system_fonts();
 
@@ -15,9 +16,17 @@ pub(crate) fn generate_png(svg_content: &Vec<u8>) -> Vec<u8> {
 
     let pixmap_size = tree.size();
 
+    (tree, pixmap_size)
+}
+
+pub(crate) fn generate_png(tree: &Tree, pixmap_size: &Size, scale: f32) -> Vec<u8> {
     let mut pixmap =
         tiny_skia::Pixmap::new(pixmap_size.width() as u32, pixmap_size.height() as u32).unwrap();
-    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+    resvg::render(
+        tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
 
     pixmap.encode_png().unwrap()
 }

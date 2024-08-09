@@ -13,8 +13,9 @@ use std::{env, fs, vec};
 pub fn main() -> iced::Result {
     let args: Vec<_> = env::args().collect();
     let (svg_content, file_name): (Vec<u8>, String) = if args.len() > 1 {
-        let file_name = &args[1];
-        let mut file = fs::File::open(file_name).expect("unable to open file");
+        let full_path = fs::canonicalize(&args[1]).unwrap();
+        let file_name = full_path.into_os_string().into_string().unwrap();
+        let mut file = fs::File::open(&file_name).expect("unable to open file");
         let metadata = fs::metadata(&file_name).expect("unable to read metadata");
         let mut buffer = vec![0; metadata.len() as usize];
         file.read(&mut buffer).expect("buffer overflow");
