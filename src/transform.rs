@@ -6,10 +6,10 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, Writer};
 
 pub(crate) fn transform_svg(
-    svg_content: &Vec<u8>,
+    svg_content: &[u8],
     matrix_transform: (f32, f32, f32, f32, f32, f32),
 ) -> Vec<u8> {
-    let mut reader = Reader::from_reader(svg_content.as_slice());
+    let mut reader = Reader::from_reader(svg_content);
     reader.config_mut().trim_text(true);
     let mut writer = Writer::new(Cursor::new(Vec::new()));
     loop {

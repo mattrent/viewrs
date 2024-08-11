@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::path::PathBuf;
 use std::{fs::File, sync::Arc};
 
-pub(crate) fn generate_svg_tree(svg_content: &Vec<u8>) -> (Tree, Size) {
+pub(crate) fn generate_svg_tree(svg_content: &[u8]) -> (Tree, Size) {
     let mut fontdb = usvg::fontdb::Database::new();
     fontdb.load_system_fonts();
 
@@ -12,7 +12,7 @@ pub(crate) fn generate_svg_tree(svg_content: &Vec<u8>) -> (Tree, Size) {
         fontdb: Arc::new(fontdb),
         ..Default::default()
     };
-    let tree = usvg::Tree::from_data(&svg_content, &opt).unwrap();
+    let tree = usvg::Tree::from_data(svg_content, &opt).unwrap();
 
     let pixmap_size = tree.size();
 
@@ -31,13 +31,14 @@ pub(crate) fn generate_png(tree: &Tree, pixmap_size: &Size, scale: f32) -> Vec<u
     pixmap.encode_png().unwrap()
 }
 
-pub(crate) fn export_png(png_data: &Vec<u8>, svg_name: &String, overwrite: bool) -> Option<()> {
+pub(crate) fn export_png(png_data: &[u8], svg_name: &String, overwrite: bool) -> Option<()> {
     let mut output_path = PathBuf::from(&svg_name);
     output_path.set_extension("png");
     if output_path.exists() && !overwrite {
         None
     } else {
         let mut file = File::create(output_path).unwrap();
-        Some(file.write_all(&png_data).unwrap())
+        file.write_all(png_data).unwrap();
+        Some(())
     }
 }

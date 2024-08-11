@@ -20,7 +20,7 @@ pub fn main() -> iced::Result {
         let mut file = fs::File::open(&file_name).expect("unable to open file");
         let metadata = fs::metadata(&file_name).expect("unable to read metadata");
         let mut buffer = vec![0; metadata.len() as usize];
-        file.read(&mut buffer).expect("buffer overflow");
+        file.read_exact(&mut buffer).expect("buffer overflow");
         (buffer, file_name.to_string())
     } else {
         (Vec::new(), String::new())

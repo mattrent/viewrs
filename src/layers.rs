@@ -29,15 +29,14 @@ pub(crate) fn get_layers(svg_content: &Vec<u8>) -> Vec<String> {
 
     let layers: Vec<String> = get_layers_from_groups(groups)
         .iter()
-        .map(|l| extract_layer_name(l))
-        .flatten()
+        .flat_map(|l| extract_layer_name(l))
         .collect();
 
     layers
 }
 
-pub(crate) fn set_visible_layers(svg_content: &Vec<u8>, layers: &Vec<(String, bool)>) -> Vec<u8> {
-    let mut reader = Reader::from_reader(svg_content.as_slice());
+pub(crate) fn set_visible_layers(svg_content: &[u8], layers: &[(String, bool)]) -> Vec<u8> {
+    let mut reader = Reader::from_reader(svg_content);
     reader.config_mut().trim_text(true);
     let mut writer = Writer::new(Cursor::new(Vec::new()));
     loop {
