@@ -1,14 +1,14 @@
 mod export;
 mod fonts;
 mod layers;
-mod picture;
+mod view;
 
 use fonts::replace_fonts;
 use iced::{Application, Settings};
 use layers::get_layers;
-use picture::{Picture, PictureFlags};
 use std::io::Read;
 use std::{env, fs, vec};
+use view::{Picture, PictureFlags};
 
 pub fn main() -> iced::Result {
     let args: Vec<_> = env::args().collect();
