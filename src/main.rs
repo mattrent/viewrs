@@ -1,6 +1,8 @@
 mod export;
+mod ext_svg;
 mod fonts;
 mod layers;
+mod transform;
 mod view;
 
 use fonts::replace_fonts;

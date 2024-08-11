@@ -2,14 +2,24 @@ use core::f32;
 use std::path::PathBuf;
 
 use crate::export::{export_png, generate_png, generate_svg_tree};
+use crate::ext_svg::ExtendedSvg;
 use crate::layers::set_visible_layers;
+use crate::transform::transform_svg;
+use iced::mouse::{
+    Button::Left,
+    Event::{ButtonPressed, ButtonReleased, CursorMoved, WheelScrolled},
+    ScrollDelta,
+};
 use iced::widget::{
     button, checkbox, column, container, row, svg, text, text_input, Checkbox, Container, Row,
 };
-use iced::{executor, font, theme, Application, Command};
-use iced::{Element, Length};
+use iced::Event::{Mouse, Window};
+use iced::{
+    event, executor, font, theme, Application, Command, Element, Length, Point, Subscription,
+};
 use iced_aw::number_input;
 use iced_aw::widgets::Modal;
+use iced_style::core::window;
 use resvg::usvg::{Size, Tree};
 
 #[derive(Debug, Default)]
@@ -17,11 +27,18 @@ pub(crate) struct Picture {
     // graphical properties
     ask_overwrite: bool,
     show_modal: bool,
+    panning: bool,
+    current_scroll: f32,
+    current_x: f32,
+    current_y: f32,
+    current_width: u32,
+    current_height: u32,
 
     // content + layers
     file_name: String,
     svg_content: Vec<u8>,
     layers: Vec<(String, bool)>,
+    matrix_transform: (f32, f32, f32, f32, f32, f32),
 
     // PNG + structure
     png_content: Vec<u8>,
@@ -45,16 +62,27 @@ pub(crate) struct PictureFlags {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    // layers
     ToggleLayerVisibility(String, bool),
-    CancelExport,
+    // output information
     OutFileName(String),
     OutWidth(f32),
     OutHeight(f32),
+    // export + overwrite modals
     OpenExport,
     SaveExport,
+    CancelExport,
     Overwrite,
     NoOverwrite,
+    // preload
     FontLoaded,
+    // events
+    Scroll(f32),
+    StartPan,
+    CursorMoved(f32, f32),
+    EndPan,
+    Reset,
+    Resized(u32, u32),
 }
 
 impl Picture {
@@ -118,6 +146,13 @@ impl Application for Picture {
         let mut png_path = PathBuf::from(&flags.file_name);
         png_path.set_extension("png");
 
+        let (svg_tree, pixmap_size) = generate_svg_tree(&flags.svg_content);
+        let height = pixmap_size.height();
+        let width = pixmap_size.width();
+        let ratio = width / height;
+        let output_height = pixmap_size.height();
+        let output_width = pixmap_size.width();
+
         let picture = Picture {
             ask_overwrite: false,
             show_modal: false,
@@ -125,6 +160,14 @@ impl Application for Picture {
             file_name: flags.file_name,
             output_file_name: String::from(png_path.to_str().unwrap()),
             layers: flags.layers.iter().map(|l| (l.to_string(), true)).collect(),
+            matrix_transform: (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+            svg_tree: Some(svg_tree),
+            ratio,
+            height,
+            width,
+            output_height,
+            output_width,
+            current_scroll: 1.0,
             ..Default::default()
         };
         (
@@ -135,6 +178,31 @@ impl Application for Picture {
 
     fn title(&self) -> String {
         self.file_name.clone()
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        event::listen_with(|event, status| {
+            if status == iced::event::Status::Captured {
+                match event {
+                    Mouse(ButtonPressed(Left)) => Some(Message::StartPan),
+                    Mouse(ButtonReleased(Left)) => Some(Message::EndPan),
+                    Mouse(CursorMoved {
+                        position: Point { x, y },
+                    }) => Some(Message::CursorMoved(x, y)),
+                    Mouse(WheelScrolled {
+                        delta: ScrollDelta::Lines { x: _, y },
+                    }) => Some(Message::Scroll(y)),
+                    _ => None,
+                }
+            } else {
+                match event {
+                    Window(_, window::Event::Resized { width, height }) => {
+                        Some(Message::Resized(width, height))
+                    }
+                    _ => None,
+                }
+            }
+        })
     }
 
     fn update(&mut self, message: Self::Message) -> Command<Message> {
@@ -157,16 +225,6 @@ impl Application for Picture {
                 Command::none()
             }
             Message::OpenExport => {
-                // generate tree first time export dialog is opened
-                if self.svg_tree.is_none() {
-                    let (svg_tree, pixmap_size) = generate_svg_tree(&self.svg_content);
-                    self.svg_tree = Some(svg_tree);
-                    self.height = pixmap_size.height();
-                    self.width = pixmap_size.width();
-                    self.ratio = self.width / self.height;
-                    self.output_height = pixmap_size.height();
-                    self.output_width = pixmap_size.width();
-                }
                 self.show_modal = true;
                 Command::none()
             }
@@ -220,13 +278,73 @@ impl Application for Picture {
                 self.ask_overwrite = false;
                 Command::none()
             }
+            Message::Scroll(scroll) => {
+                self.current_scroll += 0.05 * scroll;
+                if self.current_scroll < 1.0 {
+                    self.current_scroll = 1.0;
+                    self.matrix_transform = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+                } else {
+                    let scale = 1.0 + 0.05 * scroll;
+
+                    let (a, b, c, d, e, f) = self.matrix_transform;
+                    self.matrix_transform = (
+                        a * scale,
+                        b * scale,
+                        c * scale,
+                        d * scale,
+                        e + (1.0 - scale) * self.width / 2.0,
+                        f + (1.0 - scale) * self.height / 2.0,
+                    );
+                }
+                self.svg_content = transform_svg(&self.svg_content, self.matrix_transform);
+                Command::none()
+            }
+            Message::StartPan => {
+                self.panning = true;
+                Command::none()
+            }
+            Message::CursorMoved(x, y) => {
+                let old_x = self.current_x;
+                let old_y = self.current_y;
+                self.current_x = (x / self.current_width as f32) * self.width;
+                self.current_y = (y / self.current_height as f32) * self.height;
+                if self.panning && self.current_scroll > 1.0 {
+                    let (a, b, c, d, e, f) = self.matrix_transform;
+                    self.matrix_transform = (
+                        a,
+                        b,
+                        c,
+                        d,
+                        e + self.current_x - old_x,
+                        f + self.current_y - old_y,
+                    );
+                    self.svg_content = transform_svg(&self.svg_content, self.matrix_transform);
+                }
+                Command::none()
+            }
+            Message::EndPan => {
+                self.panning = false;
+                Command::none()
+            }
+            Message::Reset => {
+                self.matrix_transform = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+                self.current_scroll = 1.0;
+                self.svg_content = transform_svg(&self.svg_content, self.matrix_transform);
+                Command::none()
+            }
+            Message::Resized(width, height) => {
+                self.current_width = width;
+                self.current_height = height;
+                Command::none()
+            }
         }
     }
 
     fn view(&self) -> Element<Self::Message> {
         let handle = svg::Handle::from_memory(self.svg_content.clone());
 
-        let svg = svg(handle).width(Length::Fill).height(Length::Fill);
+        let inner_svg = svg(handle).width(Length::Fill).height(Length::Fill);
+        let svg = ExtendedSvg { inner: inner_svg };
 
         let checkboxes: Vec<Checkbox<Self::Message>> = self
             .layers
@@ -247,12 +365,14 @@ impl Application for Picture {
         }
 
         let export_button = button(text("Export to PNG").size(16)).on_press(Message::OpenExport);
-
+        let reset_button = button(text("Reset zoom/pan").size(16)).on_press(Message::Reset);
         let content = container(
             column![
                 svg,
                 container(row).width(Length::Fill).center_x(),
-                container(export_button).width(Length::Fill).center_x()
+                container(row![export_button, reset_button].spacing(50))
+                    .width(Length::Fill)
+                    .center_x()
             ]
             .spacing(20)
             .height(Length::Fill),
